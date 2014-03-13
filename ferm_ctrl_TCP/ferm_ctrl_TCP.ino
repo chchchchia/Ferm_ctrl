@@ -25,6 +25,10 @@ DallasTemperature sensors(&oneWire);
 DeviceAddress Probe01 = {0x28, 0xE8, 0xDF, 0xD9, 0x04, 0x00, 0x00, 0xAB};
 DeviceAddress Probe02 = {0x28, 0x0D, 0x16, 0xDA, 0x04, 0x00, 0x00, 0x30};
 DeviceAddress Probe03 = {0x28, 0x82, 0xB2, 0xD9, 0x04, 0x00, 0x00, 0x5A};
+DeviceAddress Probe04 = {0x28, 0x5A, 0x2A, 0xDA, 0x04, 0x00, 0x00, 0x3E};
+DeviceAddress Probe05 = {0x28, 0x8A, 0x00, 0xDA, 0x04, 0x00, 0x00, 0xBF};
+DeviceAddress Probe06 = {0x28, 0x36, 0x10, 0xDA, 0x04, 0x00, 0x00, 0xB9};
+
 
 //Server vars, including a timeout delay
 byte mac[] = { 0x90, 0xA2, 0xDA, 0x0E, 0xF6, 0xEF };
@@ -55,19 +59,26 @@ double tc3off=-2.0;
  double tc1=35;
  double tc2=35;
  double tc3=35;
- //timer begin
-  unsigned long startMillis;
-  //polling interval
-  unsigned long pollint = 1000;
-   unsigned long currentTime;
+ double fv1BathTC=35;
+ double fv2BathTC=35;
+ double tcAMB=35;
+//timer begin
+ unsigned long startMillis;
+//polling interval
+ unsigned long pollint = 1000;
+ unsigned long currentTime;
 //booleans for pump relays
 boolean fv1pump=false;
 boolean fv2pump=false;
 boolean fvCpump=false;
-int fv1Pin = 14;
-int fv2Pin = 15;
-int fvcPin = 16;
+const int fv1Pin = 14;
+const int fv2Pin = 15;
+const int fvcPin = 16;
 //vars for chill logic
+boolean fv1HeatAllow=true;
+boolean fv2HeatAllow=true;
+boolean fv1Heating=false;
+boolean fv2Heating=false;
 boolean fv1ChillAllow=true;
 boolean fv2ChillAllow=true;
 boolean fvCChillAllow=true;
@@ -78,10 +89,12 @@ unsigned long fv1ChillWaitTime;
 unsigned long fv2ChillWaitTime;
 unsigned long fvCChillWaitTime;
 unsigned int waitTime=60000;
+unsigned int fvCwaitTime=300000;
 String fv1RelayStr="";
 String fv2RelayStr="";
 String fvCRelayStr="";
 unsigned int chillDuration = 30000;
+unsigned int fvCchillDuration = 600000;
   int read_LCD_buttons_original()
 {
   uint16_t adc_key_in = analogRead(A0);
@@ -279,6 +292,7 @@ void fn_butok(m2_el_fnarg_p fnarg) {
   m2.setRoot(&top_el_menu);
 }
 double getTemp(DeviceAddress devAddr){
+  //I forgot why I did this, the lib provides a getTempF() fxn...
   double temp=sensors.getTempC(devAddr);
   temp=(temp*1.8) +32.0;
   return temp;
@@ -296,6 +310,9 @@ void time(){
     tc1=getTemp(Probe01)+tc1off;
     tc2=getTemp(Probe02)+tc2off;
     tc3=getTemp(Probe03)+tc3off;
+    fv1BathTC=getTemp(Probe04);
+    fv2BathTC=getTemp(Probe05);
+    tcAMB=getTemp(Probe06);
     fv1num=tc1*10;
     fv2num=tc2*10;
     fvcnum=tc3*10;
@@ -303,84 +320,149 @@ void time(){
     m2.draw();
   } 
 
-
-//chill logic
-
-//fv1 logic
-if (tc1>sp1){
-  if (fv1ChillAllow & !fv1pump){
-    //if the pump relay isn't on AND the waiting interval is over 
-  fv1ChillTime=currentTime;
-    digitalWrite(fv1Pin, LOW);
-    fv1ChillAllow=false;
-    fv1pump=true;
-    //Aaand we're chilling
-  }
+if (sp1>tcAMB){
+  fv1Heating=true;
+}else{
+  fv1Heating=false;
 }
-if (currentTime-fv1ChillTime>chillDuration&&fv1pump){
-    //if the time the relay has been on has exceeded 30 seconds, turn the pump off
-    digitalWrite(fv1Pin, HIGH);
-    fv1ChillWaitTime=currentTime;
+
+if (sp2>tcAMB){
+  fv2Heating=true;
+}else{
+  fv2Heating=false;
+}
+//HotHOT logic
+if (fv1Heating){
+    if (tc1<sp1){
+    if (fv1HeatAllow && !fv1pump && fv1BathTC<sp1){
+      //if the pump relay isn't on AND the waiting interval is over AND the bath is too cold
     fv1ChillTime=currentTime;
-    fv1pump=false; 
+      digitalWrite(fv1Pin, LOW);
+      fv1HeatAllow=false;
+      fv1pump=true;
+      //Aaand we're warming this bitch up
+    }
+  }
+  if (fv1BathTC>=sp1&&fv1pump){
+    //if the bath is just right, turn the pump off
+      digitalWrite(fv1Pin, HIGH);
+      fv1ChillWaitTime=currentTime;
+      fv1ChillTime=currentTime;
+      fv1pump=false; 
+  }
+  if(currentTime-fv1ChillWaitTime>waitTime){
+    //if the wait time period has expired, allow the pump to be reactivated if needed
+    fv1HeatAllow=true;
+  }
+}else{
+//fv1 chill logic
+  if (tc1>sp1){
+    if (fv1ChillAllow && !fv1pump && fv1BathTC>sp1&tc3<=sp1){
+      //if the pump relay isn't on AND the waiting interval is over AND the bath is too warm
+    fv1ChillTime=currentTime;
+      digitalWrite(fv1Pin, LOW);
+      fv1ChillAllow=false;
+      fv1pump=true;
+      //Aaand we're chilling
+    }
+  }
+  if (fv1BathTC<=sp1&&fv1pump&&fv1pump){
+    //if the bath is just right, turn the pump off
+      digitalWrite(fv1Pin, HIGH);
+      fv1ChillWaitTime=currentTime;
+      fv1ChillTime=currentTime;
+      fv1pump=false; 
+  }
+  if(currentTime-fv1ChillWaitTime>waitTime){
+    //if the wait time period has expired, allow the pump to be reactivated if needed
+    fv1ChillAllow=true;
+  }
 }
-if(currentTime-fv1ChillWaitTime>waitTime){
-  //if the wait time period has expired, allow the pump to be reactivated if needed
-  fv1ChillAllow=true;
-}
-
 //fv2 logic
-if (tc2>sp2){
-  if (fv2ChillAllow & !fv2pump){
-    //if the pump relay isn't on AND the waiting interval is over 
-  fv2ChillTime=currentTime;
-    digitalWrite(fv2Pin, LOW);
-    fv2ChillAllow=false;
-    fv2pump=true;
-    //Aaand we're chilling
-  }
-}
-  if (currentTime-fv2ChillTime>chillDuration&&fv2pump){
-    //if the time the relay has been on has exceeded 30 seconds, turn the pump off
-    digitalWrite(fv2Pin, HIGH);
-    fv2ChillWaitTime=currentTime;
-    fv2ChillTime=currentTime;
-    fv2pump=false;
-  
-}
-if(currentTime-fv2ChillWaitTime>waitTime){
-  //if the wait time period has expired, allow the pump to be reactivated if needed
-  fv2ChillAllow=true;
-}
-//fvC logic
-if (tc3>csp){
-  if (fvCChillAllow & !fvCpump){
-    //if the pump relay isn't on AND the waiting interval is over 
-  fvCChillTime=currentTime;
-    digitalWrite(fvcPin, LOW);
-    fvCChillAllow=false;
-    fvCpump=true;
-    //Aaand we're chilling
-  }
-}
-  if (currentTime-fvCChillTime>chillDuration&&fvCpump){
-    //if the time the relay has been on has exceeded 30 seconds, turn the pump off
-    digitalWrite(fvcPin, HIGH);
-    fvCChillWaitTime=currentTime;
-    fvCChillTime=currentTime;
-    fvCpump=false;
-  
-}
-if(currentTime-fvCChillWaitTime>waitTime){
-  //if the wait time period has expired, allow the pump to be reactivated if needed
-  fvCChillAllow=true;
-}
 
+//fv2 HOT HOT SO HOT logic
+if (fv2Heating){
+    if (tc2<sp2){
+    if (fv2HeatAllow && !fv1pump && fv2BathTC<sp2){
+      //if the pump relay isn't on AND the waiting interval is over AND the bath is too cold
+    fv2ChillTime=currentTime;
+      digitalWrite(fv2Pin, LOW);
+      fv2HeatAllow=false;
+      fv2pump=true;
+      //Aaand we're warming this bitch up
+    }
+  }
+  if (fv2BathTC>=sp2&&fv2pump){
+     //if the bath is just right, turn the pump off
+      digitalWrite(fv2Pin, HIGH);
+      fv2ChillWaitTime=currentTime;
+      fv2ChillTime=currentTime;
+      fv2pump=false; 
+  }
+  if(currentTime-fv2ChillWaitTime>waitTime){
+    //if the wait time period has expired, allow the pump to be reactivated if needed
+    fv2HeatAllow=true;
+  }
+}else{
+//else, this shit
+  if (tc2>sp2){
+    if (fv2ChillAllow & !fv2pump & fv2BathTC>sp2&tc3<=sp2){
+      //if the pump relay isn't on AND the waiting interval is over AND the bath is too warm
+     //AND the coolant is COLDER than the setpoint desired 
+    fv2ChillTime=currentTime;
+      digitalWrite(fv2Pin, LOW);
+      fv2ChillAllow=false;
+      fv2pump=true;
+      //Aaand we're chilling
+    }
+  }
+    if (fv2BathTC<=sp2&&fv2pump){
+       //if the bath is just right, turn the pump off
+      digitalWrite(fv2Pin, HIGH);
+      fv2ChillWaitTime=currentTime;
+      fv2ChillTime=currentTime;
+      fv2pump=false;  
+  }
+  if(currentTime-fv2ChillWaitTime>waitTime){
+    //if the wait time period has expired, allow the pump to be reactivated if needed
+    fv2ChillAllow=true;
+  }
+}
+//fvC logic - this is different to accommodate the compressor
+if (csp>tcAMB){
+  //disable chiller if it's colder outside than the setpoint of the coolant
+  fvCChillAllow=false;
+}else{
+  if (tc3>csp){
+    if (fvCChillAllow & !fvCpump){
+      //if the pump relay isn't on AND the waiting interval is over 
+      fvCChillTime=currentTime;
+      digitalWrite(fvcPin, LOW);
+      fvCChillAllow=false;
+      fvCpump=true;
+      //Aaand we're chilling
+    }
+  }
+    if (currentTime-fvCChillTime>fvCchillDuration&&fvCpump||tc3<=csp-5){
+      //if the time the relay has been on has exceeded 10 min, turn the compressor off
+      //Or if were 5 deg below the compressor set point
+      digitalWrite(fvcPin, HIGH);
+      fvCChillWaitTime=currentTime;
+      fvCChillTime=currentTime;
+      fvCpump=false;  
+  }
+  if(currentTime-fvCChillWaitTime>fvCwaitTime){
+    //if the wait time period has expired, allow the pump to be reactivated if needed
+    fvCChillAllow=true;
+  }
+}
+//the warm water reservoir is contolled by a seperate arduino running a PID algorithim
+//This will change, eventually
 }
   
 
 void setup() {
-  m2_SetLiquidCrystal(&lcd, 16, 2);
+m2_SetLiquidCrystal(&lcd, 16, 2);
 startMillis=millis();
 Serial.begin(9600);
 sensors.begin();
@@ -471,7 +553,7 @@ if (client){
           if (clientMsg[0]=='G'&& clientMsg[1]=='E'&& clientMsg[2]=='T'){
             Serial.println("Got Get");
             checkRelayStates();
-            String outputStr = String("&&"+(String)sp1+"&"+(String)sp2+"&"+(String)csp+"&"+(String)tc1+fv1RelayStr+"&"+(String)tc2+fv2RelayStr+"&"+(String)tc3+fvCRelayStr+"&/");
+            String outputStr = String("&&"+(String)sp1+"&"+(String)sp2+"&"+(String)csp+"&"+(String)tc1+fv1RelayStr+"&"+(String)fv1BathTC+"&"+(String)tc2+fv2RelayStr+"&"+(String)fv2BathTC+"&"+(String)tc3+fvCRelayStr+"&"+(String)tcAMB+"&/");
  //         client.print("&&"+(String)sp1+"&"+(String)sp2+"&"+(String)csp+"&"+(String)tc1+fv1RelayStr+"&"+(String)tc2+fv2RelayStr+"&"+(String)tc3+fvCRelayStr+"&/");
            client.println(outputStr);
            delay(1);
