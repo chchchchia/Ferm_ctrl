@@ -18,7 +18,16 @@
 
 #include "M2tk.h"
 #include "utility/m2ghlc.h"
+#include <DueFlashStorage.h>
+DueFlashStorage dueFlashStorage;
 #define ONE_WIRE_BUS_PIN 2
+
+struct PrevConfig {
+  int8_t sp1;
+  int8_t sp2;
+  int8_t csp;
+};
+PrevConfig prevConfig;
 
 OneWire oneWire(ONE_WIRE_BUS_PIN);
 DallasTemperature sensors(&oneWire);
@@ -337,7 +346,7 @@ if (fv1Heating){
     if (fv1HeatAllow && !fv1pump && fv1BathTC<sp1){
       //if the pump relay isn't on AND the waiting interval is over AND the bath is too cold
     fv1ChillTime=currentTime;
-      digitalWrite(fv1Pin, LOW);
+      digitalWrite(fv1Pin, HIGH);
       fv1HeatAllow=false;
       fv1pump=true;
       //Aaand we're warming this bitch up
@@ -345,7 +354,7 @@ if (fv1Heating){
   }
   if (fv1BathTC>=sp1&&fv1pump){
     //if the bath is just right, turn the pump off
-      digitalWrite(fv1Pin, HIGH);
+      digitalWrite(fv1Pin, LOW);
       fv1ChillWaitTime=currentTime;
       fv1ChillTime=currentTime;
       fv1pump=false; 
@@ -360,7 +369,7 @@ if (fv1Heating){
     if (fv1ChillAllow && !fv1pump && fv1BathTC>sp1&tc3<=sp1){
       //if the pump relay isn't on AND the waiting interval is over AND the bath is too warm
     fv1ChillTime=currentTime;
-      digitalWrite(fv1Pin, LOW);
+      digitalWrite(fv1Pin, HIGH);
       fv1ChillAllow=false;
       fv1pump=true;
       //Aaand we're chilling
@@ -368,7 +377,7 @@ if (fv1Heating){
   }
   if (fv1BathTC<=sp1&&fv1pump&&fv1pump){
     //if the bath is just right, turn the pump off
-      digitalWrite(fv1Pin, HIGH);
+      digitalWrite(fv1Pin, LOW);
       fv1ChillWaitTime=currentTime;
       fv1ChillTime=currentTime;
       fv1pump=false; 
@@ -386,7 +395,7 @@ if (fv2Heating){
     if (fv2HeatAllow && !fv1pump && fv2BathTC<sp2){
       //if the pump relay isn't on AND the waiting interval is over AND the bath is too cold
     fv2ChillTime=currentTime;
-      digitalWrite(fv2Pin, LOW);
+      digitalWrite(fv2Pin, HIGH);
       fv2HeatAllow=false;
       fv2pump=true;
       //Aaand we're warming this bitch up
@@ -394,7 +403,7 @@ if (fv2Heating){
   }
   if (fv2BathTC>=sp2&&fv2pump){
      //if the bath is just right, turn the pump off
-      digitalWrite(fv2Pin, HIGH);
+      digitalWrite(fv2Pin, LOW);
       fv2ChillWaitTime=currentTime;
       fv2ChillTime=currentTime;
       fv2pump=false; 
@@ -410,7 +419,7 @@ if (fv2Heating){
       //if the pump relay isn't on AND the waiting interval is over AND the bath is too warm
      //AND the coolant is COLDER than the setpoint desired 
     fv2ChillTime=currentTime;
-      digitalWrite(fv2Pin, LOW);
+      digitalWrite(fv2Pin, HIGH);
       fv2ChillAllow=false;
       fv2pump=true;
       //Aaand we're chilling
@@ -418,7 +427,7 @@ if (fv2Heating){
   }
     if (fv2BathTC<=sp2&&fv2pump){
        //if the bath is just right, turn the pump off
-      digitalWrite(fv2Pin, HIGH);
+      digitalWrite(fv2Pin, LOW);
       fv2ChillWaitTime=currentTime;
       fv2ChillTime=currentTime;
       fv2pump=false;  
@@ -437,7 +446,7 @@ if (csp>tcAMB){
     if (fvCChillAllow & !fvCpump){
       //if the pump relay isn't on AND the waiting interval is over 
       fvCChillTime=currentTime;
-      digitalWrite(fvcPin, LOW);
+      digitalWrite(fvcPin, HIGH);
       fvCChillAllow=false;
       fvCpump=true;
       //Aaand we're chilling
@@ -446,7 +455,7 @@ if (csp>tcAMB){
     if (currentTime-fvCChillTime>fvCchillDuration&&fvCpump||tc3<=csp-5){
       //if the time the relay has been on has exceeded 10 min, turn the compressor off
       //Or if were 5 deg below the compressor set point
-      digitalWrite(fvcPin, HIGH);
+      digitalWrite(fvcPin, LOW);
       fvCChillWaitTime=currentTime;
       fvCChillTime=currentTime;
       fvCpump=false;  
@@ -477,13 +486,37 @@ pinMode(fvcPin, OUTPUT);
   digitalWrite(4,HIGH);
 Ethernet.begin(mac, serverIP);
   server.begin();
-//  Serial.println("Server started");//log
+//  Serial.println("Server started");
+uint8_t codeRunningForTheFirstTime = dueFlashStorage.read(0); // flash bytes will be 255 at first run
+if (codeRunningForTheFirstTime) {
+  prevConfig.sp1=sp1;
+  prevConfig.sp2=sp2;
+  prevConfig.csp=csp;
+  byte b2[sizeof(PrevConfig)]; // create byte array to store the struct
+  memcpy(b2, &prevConfig, sizeof(PrevConfig)); // copy the struct to the byte array
+  dueFlashStorage.write(4, b2, sizeof(PrevConfig)); // write byte array to flash
+    // write 0 to address 0 to indicate that it is not the first time running anymore
+  dueFlashStorage.write(0, 0); 
+  }else{
+  byte* b = dueFlashStorage.readAddress(4); // byte array which is read from flash at address 4
+  PrevConfig configurationFromFlash; // create a temporary struct
+  memcpy(&configurationFromFlash, b, sizeof(PrevConfig)); // copy byte array to temporary struc 
+  sp1=configurationFromFlash.sp1;
+  sp2=configurationFromFlash.sp2;
+  csp=configurationFromFlash.csp;
+  }
+
 }
 
 boolean parseMsg(String msg){
      int begin=0;
      int index=0;
      int msgLength=msg.length();
+     double tempsp1;
+     double tempsp2;
+     double tempcsp;
+     boolean changed=false;
+     
      if (msgLength==0){
        return false;
      }
@@ -498,16 +531,36 @@ boolean parseMsg(String msg){
        char buff[value.length()+1];
        value.toCharArray(buff, value.length()+1);
        if (i==0){
-         sp1=atof(buff);
+         tempsp1=atof(buff);
+         if (tempsp1!=sp1){
+           sp1=tempsp1;
+           changed=true;
+           prevConfig.sp1=sp1;
+         }
        }else if (i==1){
-         sp2=atof(buff);
+         tempsp2=atof(buff);
+         if (tempsp2!=sp2){
+           sp2=tempsp2;
+           changed=true;
+           prevConfig.sp2=sp2;
+         }
        }else if (i==2){
-         csp = atof(buff);
+         tempcsp = atof(buff);
+         if (tempcsp!=csp){
+           csp=tempcsp;
+           changed=true;
+           prevConfig.csp=csp;
+         }
        }
        begin=end;
        i++;
       }
      }
+    if (changed){
+      byte b2[sizeof(PrevConfig)]; // create byte array to store the struct
+      memcpy(b2, &prevConfig, sizeof(PrevConfig)); // copy the struct to the byte array
+      dueFlashStorage.write(4, b2, sizeof(PrevConfig)); // write byte array to flash
+    }
 number1 = sp1*10;
 number3 = sp2*10;
 number5 = csp*10;
