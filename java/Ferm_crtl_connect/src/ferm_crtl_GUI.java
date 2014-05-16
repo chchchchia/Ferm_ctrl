@@ -1,3 +1,4 @@
+package ferm_ctrl;
 import java.awt.Color;
 import java.awt.EventQueue;
 import java.awt.Font;
@@ -31,9 +32,10 @@ import org.jfree.chart.renderer.xy.XYLineAndShapeRenderer;
 import org.jfree.data.xy.XYSeries;
 import org.jfree.data.xy.XYSeriesCollection;
 
+import ferm_ctrl.ConnectionState;
 
 public class ferm_crtl_GUI extends JFrame {
-
+	
 	private JPanel contentPane;
 	private JTextField textConIP;
 	public static JTextField textSp1;
@@ -50,39 +52,40 @@ public class ferm_crtl_GUI extends JFrame {
 	public static JLabel labelChillChill;
 	public static JLabel lblNoYes;
 	private XYPlot plot;
-    private int datasetIndex = 5;
     public final DateAxis axis;
     static XYSeries series[] = new XYSeries[6];
     String[] names={"sp1","sp2","spc","FV1","FV2","Coolant"};
- //   public static final String ipPattern =
     enum FermVessels {FV1,FV2,FVC};
-//	static public FermVessel FV1 = new FermVessel(1,75,0.2);
-//	static public FermVessel FV2 = new FermVessel(2,75,0.2);
-//	static public FermVessel FVC = new FermVessel(0,38,2.0);
-//	private Ferm_TCP ferm_TCP=new Ferm_TCP(FV1, FV2, FVC);
 	private Ferm_TCP ferm_TCP= new Ferm_TCP();
 	public FermVessel FV1 = ferm_TCP.getFV1();
 	public FermVessel FV2 =	ferm_TCP.getFV2();	
 	public FermVessel FVC = ferm_TCP.getFVC();
-	//Confusing, I know. THis was done since tcp modifies the fv's, not this class.
-	private enum ConnectionState {CONNECTING, CONNECTED, CLOSED, GETTING, SETTING }
 
 //TODO change star from blue to red depending on heating vs cooling mode
-//TODO make a state machine that is threaded to handle the connection, get, set commands
 
+	public Timer stateChange = new Timer(500, new ActionListener(){
+		public void actionPerformed(ActionEvent k){
+			lblNoYes.setText(ferm_TCP.getState().toString());
+			if(ferm_TCP.getState()==ConnectionState.STOPPED){
+					tick.stop();
+				}
+			if(ferm_TCP.getState()==ConnectionState.CONNECTED&&!tick.isRunning()){
+					tick.start();
+				}
+			}
+	});
+	
 	public Timer tick = new Timer(5000,new ActionListener(){
 		//this method checks values from server every 5 seconds, updates the onscreen labels
 		public void actionPerformed(ActionEvent k){
 			try{
-//				if (ferm_TCP.!=null){
-//				System.out.println(ferm_TCP.getState().toString());
-//				if (ferm_TCP.getState().toString()=="CLOSED"){
-//			ferm_TCP.connect();
-//			System.out.println(ferm_TCP.getState().toString());
-//				}
-//				}
 			ferm_TCP.getValues();
-//			if(ferm_TCP.getState().toString()=="CLOSED"){
+			//TODO why is this if () here?
+			if(ferm_TCP.getState()==ConnectionState.CLOSED){
+				tick.stop();
+			}
+			while(ferm_TCP.getState()!=ConnectionState.CLOSED){}
+			//Add values obtained to the running graph
 			series[0].add(System.currentTimeMillis(),FV1.getSP());
 			series[1].add(System.currentTimeMillis(),FV2.getSP());
 			series[2].add(System.currentTimeMillis(),FVC.getSP());
@@ -90,8 +93,8 @@ public class ferm_crtl_GUI extends JFrame {
 			series[4].add(System.currentTimeMillis(),FV2.getTemp());
 			series[5].add(System.currentTimeMillis(),FVC.getTemp());
 			if (series[0].getMaxX()-series[0].getMinX()>60000){
-				//if the series covers more than 5 minutes (1800000 msec), then get rid of the leading entry
-				System.out.println("deleting line");
+				//if the series covers more than 5 minutes (60000 msec), then get rid of the leading entry
+				//System.out.println("deleting line");
 				for(int i =0;i<6;i++){
 					series[i].remove(1);
 				}
@@ -126,12 +129,8 @@ public class ferm_crtl_GUI extends JFrame {
 			}else{
 				labelChillChill.setText("");
 			}
-// 			}
 			}catch (Exception e){
-				//if nullPointer, conn not established, print message to try again
 				e.printStackTrace();
-				lblNoYes.setText("NO");
-				lblNoYes.setForeground(Color.RED);
 				tick.stop();
 			}
 		}
@@ -164,6 +163,7 @@ public class ferm_crtl_GUI extends JFrame {
 		for (int i=0;i<6;i++){
 			series[i]=new XYSeries("Set:"+names[i]);
 		}
+		//This ensures connection is closed on application close
 		addWindowListener(new WindowAdapter() {
 			@Override
 			public void windowClosed(WindowEvent arg0) {
@@ -173,7 +173,8 @@ public class ferm_crtl_GUI extends JFrame {
 					e.printStackTrace();
 				}System.exit(EXIT_ON_CLOSE);
 			}
-		});//Ensures connection is closed on application close
+		});
+		
 		
 		setTitle("Fermentation Chiller Sys");
 		setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
@@ -183,19 +184,13 @@ public class ferm_crtl_GUI extends JFrame {
 		setContentPane(contentPane);
 		contentPane.setLayout(null);
 		
-		JLabel lblConnection = new JLabel("Connection:");
+		JLabel lblConnection = new JLabel("Status:");
 		lblConnection.setBounds(0, 11, 191, 45);
 		lblConnection.setFont(new Font("Dialog", Font.PLAIN, 31));
 		contentPane.add(lblConnection);
 		
-		final JLabel lblNoYes = new JLabel("NO");
-		lblNoYes.setBounds(188, 12, 70, 38);
-		lblNoYes.setForeground(Color.RED);
-		lblNoYes.setFont(new Font("Dialog", Font.PLAIN, 36));
-		contentPane.add(lblNoYes);
-		
-		textConIP = new JTextField();
-		textConIP.setBounds(260, 32, 112, 20);
+		textConIP = new JTextField(ferm_TCP.getState().toString());
+		textConIP.setBounds(10, 65, 114, 20);
 		textConIP.setText("68.47.140.19");
 		textConIP.setBackground(SystemColor.menu);
 		textConIP.setFont(new Font("Dialog", Font.PLAIN, 14));
@@ -285,6 +280,12 @@ public class ferm_crtl_GUI extends JFrame {
 		labelTc2.setFont(new Font("Tahoma", Font.PLAIN, 32));
 		contentPane.add(labelTc2);
 		
+		lblNoYes = new JLabel("STOPPED");
+		lblNoYes.setBounds(118, 16, 237, 38);
+		lblNoYes.setForeground(Color.BLACK);
+		lblNoYes.setFont(new Font("Dialog", Font.PLAIN, 27));
+		contentPane.add(lblNoYes);
+		
 		labelTcC = new JLabel("");
 		labelTcC.setBounds(300, 206, 55, 46);
 		labelTcC.setFont(new Font("Tahoma", Font.PLAIN, 32));
@@ -329,7 +330,7 @@ public class ferm_crtl_GUI extends JFrame {
 		contentPane.add(lblPumpOn);
 		
 		JSeparator separator = new JSeparator();
-		separator.setBounds(10, 267, 414, 2);
+		separator.setBounds(10, 267, 442, 2);
 		contentPane.add(separator);
 		
 		JButton btnSet = new JButton("SET");
@@ -342,42 +343,36 @@ public class ferm_crtl_GUI extends JFrame {
 				textSpC.setEditable(false);
 				//CODE here to check format of set text boxes				
 				try{
-//					if (ferm_TCP.getState().toString()==CONNECTED){
+					if (ferm_TCP.getState()==ConnectionState.CLOSED||ferm_TCP.getState()==ConnectionState.STOPPED){
+				
+					//TODO code to handle if machine is not connected and set is clicked
 					ferm_TCP.setValues(Double.parseDouble(textSp1.getText()), Double.parseDouble(textSp2.getText()), Double.parseDouble(textSpC.getText()));
-//					}
-					}catch (Exception exc){
+					}
+				}catch (Exception exc){
 					System.out.print(exc);
 				}
 			}
 		});
 		contentPane.add(btnSet);
 		
-		JButton btnGo = new JButton("GO!");
-		btnGo.setBounds(384, 11, 68, 23);
+		JButton btnGo = new JButton("Connect");
+		btnGo.setBounds(359, 11, 93, 23);
 		btnGo.setToolTipText("Click to connect to the controller");
 		btnGo.addActionListener(new ActionListener() {
 			public void actionPerformed(ActionEvent e){
 				try{
 					if (textConIP.getText()!=" "){	
+						//TODO parser here?
 						ferm_TCP.setIP(textConIP.getText());
 					}else{
 						JOptionPane.showMessageDialog(null, "You should really enter a valid ip address", "Error", JOptionPane.ERROR_MESSAGE);
 						return;
 					}
+					stateChange.start();
 					ferm_TCP.connect();
-					lblNoYes.setText("YES");
-					lblNoYes.setForeground(Color.GREEN);
-					tick.start();
-//					String ipAddr = ferm_TCP.clientSocket.getInetAddress().toString();
-//					if (ipAddr.startsWith("/")){
-//						ipAddr=ipAddr.substring(1);
-//					}
-//					textConIP.setText(ipAddr);
 				}catch (Exception exc){
 					exc.printStackTrace();
-					tick.stop();
-					lblNoYes.setText("NO");
-					lblNoYes.setForeground(Color.RED);
+					tick.stop();				
 				}
 				
 			}
@@ -385,15 +380,14 @@ public class ferm_crtl_GUI extends JFrame {
 		contentPane.add(btnGo);
 		
 		JButton btnStop = new JButton("Stop");
-		btnStop.setBounds(384, 32, 68, 23);
+		btnStop.setBounds(359, 32, 93, 23);
 		btnStop.setToolTipText("Click to disconnect from the controller");
 		btnStop.addActionListener(new ActionListener() {
 			public void actionPerformed(ActionEvent arg0) {
 				try{
 					tick.stop();
+//					stateChange.stop();
 					ferm_TCP.stopThis();
-					lblNoYes.setText("NO");
-					lblNoYes.setForeground(Color.RED);
 				}catch (Exception e){
 					e.printStackTrace();
 				}
@@ -405,9 +399,9 @@ public class ferm_crtl_GUI extends JFrame {
 		JSeparator separator_1 = new JSeparator();
 		separator_1.setBounds(10, 377, 414, 2);
 		contentPane.add(separator_1);
-		
+		//TODO add graph OPTIONS for tcamb, tc baths, etc
 		JPanel panel = new JPanel();
-		panel.setBounds(10, 379, 414, 198);
+		panel.setBounds(10, 379, 442, 198);
 		final XYSeriesCollection sp1 = new XYSeriesCollection(series[0]);
         final XYSeriesCollection sp2 = new XYSeriesCollection(series[1]);
         final XYSeriesCollection spC = new XYSeriesCollection(series[2]);
@@ -418,9 +412,6 @@ public class ferm_crtl_GUI extends JFrame {
 	            null, "Time", "Temp (F)", sp1
 	        );
 	        chart.setBackgroundPaint(SystemColor.menu);
-	        
-	       
-	       
 	        this.plot = chart.getXYPlot();
 	        this.plot.setDataset(1, sp2);
 	        this.plot.setRenderer(1, new XYLineAndShapeRenderer(true, false));
@@ -435,17 +426,12 @@ public class ferm_crtl_GUI extends JFrame {
 	        this.plot.setBackgroundPaint(Color.lightGray);
 	        this.plot.setDomainGridlinePaint(Color.white);
 	        this.plot.setRangeGridlinePaint(Color.white);
-//	        this.plot.setAxisOffset(new Spacer(Spacer.ABSOLUTE, 4, 4, 4, 4));
 	        axis = (DateAxis)this.plot.getDomainAxis();	
 	        axis.setAutoRange(true);
 	        axis.setFixedAutoRange(60000);
 	        axis.setDateFormatOverride(new SimpleDateFormat("MM-dd HH:mm:ss"));
-
-	       axis.setTickUnit(new DateTickUnit(DateTickUnitType.HOUR,1));
-	       //this needs to be readjusted as the user zooms in
+	        axis.setTickUnit(new DateTickUnit(DateTickUnitType.HOUR,1));
 	       	axis.setAutoTickUnitSelection(true);
-//	        final DateAxis rangeAxis2 = new DateAxis("Time");
-//	        rangeAxis2.setAutoRange(false);
 	       	
 		contentPane.add(panel);
 		
@@ -478,21 +464,20 @@ public class ferm_crtl_GUI extends JFrame {
 		contentPane.add(lblAmbient);
 		
 		JSeparator separator_2 = new JSeparator();
-		separator_2.setBounds(10, 196, 414, 2);
+		separator_2.setBounds(10, 196, 442, 2);
 		contentPane.add(separator_2);
 		
 		JLabel lblBeerTemp = new JLabel("Beer Temp");
 		lblBeerTemp.setFont(new Font("Dialog", Font.PLAIN, 12));
 		lblBeerTemp.setBounds(180, 68, 77, 15);
 		contentPane.add(lblBeerTemp);
-		
-//		JPanel panel = testBed.getPanel();
-//		panel.setBounds(10, 360, 429, 258);
-//		contentPane.add(panel);
 	}
 	
 	public JLabel getlblFV1Bath(){
 		return lblFV1Bath;
+	}
+	public JLabel getlblNoYes(){
+		return lblNoYes;
 	}
 	public JLabel getLblTc1() {
 		return lblTc1;

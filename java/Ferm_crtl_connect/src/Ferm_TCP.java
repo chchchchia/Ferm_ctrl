@@ -1,3 +1,4 @@
+package ferm_ctrl;
 
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
@@ -22,9 +23,9 @@ import java.util.Date;
 
 import javax.swing.JOptionPane;
 
+import ferm_ctrl.ConnectionState;
 
 public class Ferm_TCP implements Runnable{
-
 
 	static double values[] = new double[9];
 	static long currentTime=0;
@@ -36,25 +37,24 @@ public class Ferm_TCP implements Runnable{
 	public FermVessel FVC;
 	private double tcAMB;
 
-//Ip Address and Port, where the Arduino Server is running on
+//Ip Address and Port on which the Arduino Server is operating
 	private String serverIP="68.47.140.19";
 	private static final int serverPort=8888;
 	public enum valueNames{sp1,sp2,spC,tc1,fv1Bath,tc2,fv2Bath,tcC,tcAMB};
 	public Socket clientSocket;
-	public enum ConnectionState {CONNECTING, CONNECTED, CLOSED, GETTING, SETTING }
 	private volatile ConnectionState state;
 
 public Ferm_TCP(){
-	this.state=ConnectionState.CLOSED;
-	FV1= new FermVessel(1,75,0.2);
+	this.state=ConnectionState.STOPPED;
+	FV1 = new FermVessel(1,75,0.2);
 	FV2 = new FermVessel(2,75,0.2);
 	FVC = new FermVessel(0,38,2.0);
 }
-	public Ferm_TCP(FermVessel FV1, FermVessel FV2, FermVessel FVC){
+public Ferm_TCP(FermVessel FV1, FermVessel FV2, FermVessel FVC){
 	this.FV1=FV1;
 	this.FV2=FV1;
 	this.FVC=FV1;
-	this.state=ConnectionState.CLOSED;
+	this.state=ConnectionState.STOPPED;
 //	run();
 }
 	public double gettcAMB(){
@@ -77,8 +77,9 @@ public Ferm_TCP(){
 		return this.FVC;
 	}
 	
-	synchronized public void getValues(){
-    	//this method will send the get command to the server and return those values as a big ol string
+	public void getValues(){
+    	//this method will send the get command to the server and receive those values as a string
+		//each get is started as a thread	
 		if (state==ConnectionState.CLOSED){
 			connect();
 		}
@@ -95,7 +96,6 @@ public Ferm_TCP(){
     	currentTime=beginTime;
     	String getReply="";
     	System.out.println("wrote get statement");
-//TODO code here to timeout if nothing received in timely manner
     	while(currentTime-beginTime<timeOutInt&&getReply==""){
     	getReply = inFromServer.readLine();
     	currentTime=System.currentTimeMillis();
@@ -104,7 +104,6 @@ public Ferm_TCP(){
     	System.out.println(getReply);
     	if (getReply!=null){
     		analyzeMsg(getReply);
- //   		logFile(getReply);
     		try {
 				dbLogFile();
 			} catch (ClassNotFoundException e) {
@@ -119,7 +118,7 @@ public Ferm_TCP(){
     		state=ConnectionState.CLOSED;
     		return;
     	}
-        clientSocket.close();
+//        clientSocket.close();
         state=ConnectionState.CLOSED;
     }catch(SocketException se){
     	if (se.getMessage()=="Connection Reset"){
@@ -133,7 +132,13 @@ public Ferm_TCP(){
     			JOptionPane.showMessageDialog(null, ee.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
     			System.err.println(ee);
     		}
-    	}
+    	}try {
+			stopThis();
+
+		} catch (Exception e) {
+
+			e.printStackTrace();
+		}
     }catch (IOException ioe){
     	JOptionPane.showMessageDialog(null, ioe.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
     	System.err.println(ioe);
@@ -145,15 +150,18 @@ public Ferm_TCP(){
     }
 	
     public void stopThis()throws Exception{
-    	keepGoing = false;
+ //   	keepGoing = false;
+    	if(clientSocket!=null){
     	clientSocket.close();
-    	this.state=ConnectionState.CLOSED;
+    	}
+    	this.state=ConnectionState.STOPPED;
     }
     public void connect(){
-    	if (this.state==ConnectionState.CLOSED){
+    	if (this.state==ConnectionState.CLOSED||this.state==ConnectionState.STOPPED){
     		Thread t=new Thread(new Runnable(){
     			public void run(){ 		
     	try{
+    		state=ConnectionState.CONNECTING;
     	clientSocket = new Socket(serverIP, serverPort);//making the socket connection
     	if (clientSocket.isConnected()){
     		state=ConnectionState.CONNECTED;
@@ -162,11 +170,11 @@ public Ferm_TCP(){
     	}catch (UnknownHostException e){
     		JOptionPane.showMessageDialog(null, "Unknown Host "+e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
     		System.out.println(e.toString());
-    		state=ConnectionState.CLOSED;
+    		state=ConnectionState.STOPPED;
     	}catch (IOException ioe){
     		JOptionPane.showMessageDialog(null, ioe.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
     		System.out.println(ioe.toString());
-    		state=ConnectionState.CLOSED;
+    		state=ConnectionState.STOPPED;
     	}
     		}
     	});
@@ -228,13 +236,17 @@ public Ferm_TCP(){
     	}
     	
     
-    synchronized  public void setValues(final double sp1, final double sp2, final double spC){
+    public void setValues(final double sp1, final double sp2, final double spC){
     	//this method sends values to the controller
+    	if (state==ConnectionState.STOPPED){
+    		JOptionPane.showMessageDialog(null, new String("Must be Connected to set values!"), "Error", JOptionPane.ERROR_MESSAGE);
+    		return;
+    	}
     	if (state==ConnectionState.CLOSED){
 			connect();
-			state=ConnectionState.SETTING;
 		}
-    	while(state==ConnectionState.SETTING){}
+    	while(state!=ConnectionState.CONNECTED){}
+    	//This should allow the method to wait while the machine connects
     	if (this.state==ConnectionState.CONNECTED){
     		Thread t=new Thread(new Runnable(){
     			public void run(){
@@ -243,7 +255,8 @@ public Ferm_TCP(){
     	String msgToServer = "SET&"+Double.toString(sp1)+"&"+Double.toString(sp2)+"&"+Double.toString(spC)+"&/";
     	DataOutputStream outToServer = new DataOutputStream(clientSocket.getOutputStream());
 //    	BufferedReader inFromServer = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
-    	System.out.println("Attempting Set");
+    	//TODO hmm, maybe send a get after sending the send to check the values and assure a successful set
+    	//System.out.println("Attempting Set");
     	outToServer.writeBytes(msgToServer+'\n');
     	outToServer.flush();
     	FV1.setSP(sp1);
@@ -263,9 +276,10 @@ public Ferm_TCP(){
     		}
     }
     
- synchronized public void analyzeMsg(String msg){
+    public void analyzeMsg(String msg){
 	 //takes apart the received message, as a string, and extracts the values
 	 //AS OF THIS VERSION: the order is sp1*&sp2&spC&tc1&tc2&tcC, where * is present depending on relay status
+    //Also, follow the valueNames. And the tests for this (look for the stub!)
 	 boolean fv1Relay=FV1.isChilling();
 	 boolean fv2Relay=FV2.isChilling();
 	 boolean fvCRelay=FVC.isChilling();
@@ -358,17 +372,12 @@ public Ferm_TCP(){
 	 }	 
  }
  
-	public synchronized ConnectionState getState(){
+	public ConnectionState getState(){
 		return this.state;
 	}
  
  public void run(){
-/*	 try{
-		 if (state==ConnectionState.CONNECTING){
-			 this.connect();
-		 }else if(state==ConnectionState.)
-	 }
-*/
+
  }
 	
 }

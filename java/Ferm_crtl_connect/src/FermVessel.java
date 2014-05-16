@@ -1,3 +1,4 @@
+package ferm_ctrl;
 
 public class FermVessel {
 	private double sp;
@@ -8,11 +9,8 @@ public class FermVessel {
 	private boolean relay;
 	//other defing vars go here, reserved for future use
 	//size, type could help with chilling logic
-/*	
-	public FermVessel(int number){
-		this.number=number;
-	}
-*/
+
+	
 	
 	public FermVessel(int number, double sp, double diff){
 		this.number=number;
